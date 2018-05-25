@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::io;
 
+use mio::{Evented, Token, Poll, PollOpt, Ready};
 use mio::net::TcpStream;
 
 pub enum ConnSource {
@@ -19,10 +20,6 @@ impl Connection {
         -> Connection
     {
         Connection{ addr, stream, source }
-    }
-
-    pub fn stream(&mut self) -> &mut TcpStream {
-        &mut self.stream
     }
 
     pub fn addr(&self) -> &SocketAddr {
@@ -47,5 +44,23 @@ impl io::Write for Connection {
 impl io::Read for Connection {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.stream.read(buf)
+    }
+}
+
+impl Evented for Connection {
+    fn register(&self, poll: &Poll, token: Token, interest: Ready,
+                opts: PollOpt) -> io::Result<()>
+    {
+        self.stream.register(poll, token, interest, opts)
+    }
+
+    fn reregister(&self, poll: &Poll, token: Token, interest: Ready,
+                opts: PollOpt) -> io::Result<()>
+    {
+        self.stream.reregister(poll, token, interest, opts)
+    }
+
+    fn deregister(&self, poll: &Poll) -> io::Result<()> {
+        self.stream.deregister(poll)
     }
 }

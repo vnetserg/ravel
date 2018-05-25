@@ -65,7 +65,7 @@ impl EventLoop {
                                          ConnSource::Listener(listener_id)));
         let conn = self.connections.get_mut(id).unwrap();
 
-        self.poll.register(conn.stream(), Token(2 * id + 1),
+        self.poll.register(conn, Token(2 * id + 1),
                            Ready::readable(), PollOpt::level())?;
 
         self.dispatcher.handle_new_connection(conn);
