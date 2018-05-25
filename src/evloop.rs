@@ -6,7 +6,7 @@ use mio::net::TcpListener;
 
 use slab::Slab;
 
-use conn::{ Connection, ConnSource };
+use conn::Connection;
 use dispatcher::Dispatcher;
 
 
@@ -61,9 +61,10 @@ impl EventLoop {
         let (stream, addr) = self.listeners.get(listener_id).unwrap().accept()?;
         eprintln!("New connection from {:?}", addr);
 
-        let id = self.connections.insert(Connection::new(stream, addr,
-                                         ConnSource::Listener(listener_id)));
-        let conn = self.connections.get_mut(id).unwrap();
+        let entry = self.connections.vacant_entry();
+        let id = entry.key();
+        let conn = Connection::new(id, listener_id, stream, addr);
+        let conn = entry.insert(conn);
 
         self.poll.register(conn, Token(2 * id + 1),
                            Ready::readable(), PollOpt::level())?;

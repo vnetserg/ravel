@@ -4,30 +4,31 @@ use std::io;
 use mio::{Evented, Token, Poll, PollOpt, Ready};
 use mio::net::TcpStream;
 
-pub enum ConnSource {
-    Listener(usize),
-    Client(usize)
-}
-
 pub struct Connection {
+    id: usize,
+    listener: Option<usize>,
     addr: SocketAddr,
     stream: TcpStream,
-    source: ConnSource
 }
 
 impl Connection {
-    pub fn new(stream: TcpStream, addr: SocketAddr, source: ConnSource)
-        -> Connection
+    pub fn new(id: usize, listener: usize, stream: TcpStream,
+               addr: SocketAddr) -> Connection
     {
-        Connection{ addr, stream, source }
+        let listener = Some(listener);
+        Connection{ id, listener, addr, stream }
     }
 
     pub fn addr(&self) -> &SocketAddr {
         &self.addr
     }
+    
+    pub fn id(&self) -> usize {
+        self.id
+    }
 
-    pub fn source(&self) -> &ConnSource {
-        &self.source
+    pub fn listener(&self) -> Option<usize> {
+        self.listener
     }
 }
 
