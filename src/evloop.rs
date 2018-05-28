@@ -67,7 +67,7 @@ impl EventLoop {
         let conn = entry.insert(conn);
 
         self.poll.register(conn, Token(2 * id + 1),
-                           Ready::readable(), PollOpt::level())?;
+                           Ready::readable(), PollOpt::edge())?;
 
         self.dispatcher.handle_new_connection(conn);
 

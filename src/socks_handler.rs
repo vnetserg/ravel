@@ -4,10 +4,6 @@ use std::io::Write;
 use conn::Connection;
 
 
-const SOCKS_V5: u8 = 0x05;
-const NO_AUTH: u8 = 0x00;
-
-
 pub struct SocksHandlerFactory {
 
 }
@@ -63,43 +59,36 @@ impl SocksHandler {
     fn handle_auth_data<'a, 'b, 'c>(&'a mut self, conn: &'b mut Connection,
                                     data: &'c[u8]) -> &'c[u8]
     {
-        if data.len() < 2 {
-            eprintln!("Error: got only {} bytes in WaitForAuth state",
-                     data.len());
-            self.close();
-            return &[];
-        }
-
-        let (&socks_ver, data) = data.split_first().unwrap();
-        let (&n_methods, data) = data.split_first().unwrap();
-        if socks_ver != SOCKS_V5 {
-            eprintln!("Error: got {} socks version", socks_ver);
-            self.close();
-            return &[];
-        }
-
-        if data.len() < n_methods as usize {
-            eprintln!("Error: got {} methods, expected {}",
-                     data.len(), n_methods);
-            self.close();
-            return &[];
-        }
-
-        for i in 0 .. n_methods {
-            if data[i as usize] == NO_AUTH {
-                eprintln!("Auth method negotiation successfull");
-                conn.write(&[SOCKS_V5, NO_AUTH]).unwrap_or_else(|err| {
-                    eprintln!("Failed to write to socket: {}", err);
-                    0
-                });
-                self.state = SocksHandlerState::WaitForRequest;
-                return &data[n_methods as usize ..];
+        let (request, data) = match AuthRequest::parse(data) {
+            Some((request, data)) => (request, data),
+            None => {
+                eprintln!("Invalid AuthRequest, closing connection");
+                self.close();
+                return &[];
             }
+        };
+
+        if request.version != 5 {
+            eprintln!("Unsupported socks version: {}", request.version);
+            self.close();
+            return &[];
         }
 
-        eprintln!("Error: no supported auth method");
-        self.close();
-        return &[];
+        if !request.methods.contains(&AuthMethod::Unauthorized) {
+            eprintln!("No supported auth method");
+            self.close();
+            return &[];
+        }
+
+        let reply = AuthReply{version: 5, method: AuthMethod::Unauthorized};
+        conn.write(&reply.to_bytes()).unwrap_or_else(|err| {
+            eprintln!("Failed to write to socket: {}", err);
+            0
+        });
+
+        eprintln!("Auth negotiation successfull");
+        self.state = SocksHandlerState::WaitForRequest;
+        return data;
     }
 
     pub fn close(&mut self) {
@@ -111,10 +100,9 @@ impl SocksHandler {
     }
 
     pub fn is_closed(&self) -> bool {
-        if let SocksHandlerState::Closed = self.state {
-            true
-        } else {
-            false
+        match self.state {
+            SocksHandlerState::Closed => true,
+            _ => false
         }
     }
 }
@@ -122,5 +110,54 @@ impl SocksHandler {
 impl Drop for SocksHandler {
     fn drop(&mut self) {
         eprintln!("Dropped handler");
+    }
+}
+
+
+#[derive(PartialEq)]
+enum AuthMethod {
+    Unauthorized,
+    Other
+}
+
+struct AuthRequest {
+    version: u8,
+    methods: Vec<AuthMethod>
+}
+
+impl AuthRequest {
+    pub fn parse(data: &[u8]) -> Option<(AuthRequest, &[u8])> {
+        let (&version, data) = data.split_first()?;
+        let (&n_methods, data) = data.split_first()?;
+
+        if data.len() < n_methods as usize {
+            return None;
+        }
+
+        let methods = data[.. n_methods as usize].iter().map(|&x|
+            match x {
+                0 => AuthMethod::Unauthorized,
+                _ => AuthMethod::Other
+            }
+        ).collect();
+
+        Some((AuthRequest{ version, methods }, &data[n_methods as usize ..]))
+    }
+}
+
+
+struct AuthReply {
+    version: u8,
+    method: AuthMethod
+}
+
+impl AuthReply {
+    fn to_bytes(&self) -> [u8; 2] {
+        let method = match self.method {
+            AuthMethod::Unauthorized => 0,
+            AuthMethod::Other => panic!("Can not convert AuthMethod::Other \
+                                         to bytes!")
+        };
+        [self.version, method]
     }
 }
