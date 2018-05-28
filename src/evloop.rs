@@ -7,7 +7,7 @@ use mio::net::TcpListener;
 use slab::Slab;
 
 use conn::Connection;
-use dispatcher::Dispatcher;
+use dispatcher::{Dispatcher, DispatcherRequest};
 
 
 const BUFFER_SIZE: usize = 2048;
@@ -46,10 +46,10 @@ impl EventLoop {
                 let Token(id) = event.token();
                 if id % 2 == 0 {
                     self.handle_new_connection(id/2).unwrap_or_else(
-                        |err| eprintln!("Connection failed: {:?}", err));
+                        |err| eprintln!("Connection failed: {}", err));
                 } else {
                     self.handle_connection_readable((id-1)/2).unwrap_or_else(
-                        |err| eprintln!("Connection failed: {:?}", err));
+                        |err| eprintln!("Connection failed: {}", err));
                 }
             }
         }
@@ -59,7 +59,7 @@ impl EventLoop {
         -> Result<(), io::Error>
     {
         let (stream, addr) = self.listeners.get(listener_id).unwrap().accept()?;
-        eprintln!("New connection from {:?}", addr);
+        eprintln!("New connection from {}", addr);
 
         let entry = self.connections.vacant_entry();
         let id = entry.key();
@@ -83,12 +83,17 @@ impl EventLoop {
         if len == 0 {
             let mut conn = self.connections.remove(id);
             self.dispatcher.handle_drop_connection(&mut conn);
-            eprintln!("Connection closed: {:?}", conn.addr());
+            eprintln!("Connection closed: {}", conn.addr());
         } else {
-            let conn = self.connections.get_mut(id).unwrap();
-            self.dispatcher.handle_connection_data(conn,
-                                                   &self.read_buffer[..len]);
-            eprintln!("Got {} bytes from {}", len, conn.addr());
+            let request = {
+                let conn = self.connections.get_mut(id).unwrap();
+                eprintln!("Got {} bytes from {}", len, conn.addr());
+                self.dispatcher.handle_connection_data(conn,
+                                                       &self.read_buffer[..len])
+            };
+            if let DispatcherRequest::Drop(id) = request {
+                self.connections.remove(id);
+            }
         }
         
         Ok(())
