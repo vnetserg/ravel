@@ -41,54 +41,57 @@ impl SocksHandler {
                                               mut data: &'c [u8])
     {
         while data.len() > 0 {
-            data = match self.state {
+            let data_or_err = match self.state {
                 SocksHandlerState::WaitForAuth =>
                     self.handle_auth_data(conn, data),
-                SocksHandlerState::WaitForRequest => {
-                    conn.write(data).unwrap_or_else(|err| {
-                        eprintln!("Failed to write to socket: {}", err);
-                        0
-                    });
-                    &[]
-                }
+                SocksHandlerState::WaitForRequest => match conn.write(data) {
+                    Ok(_) => break,
+                    Err(err) => Err(err.to_string()),
+                },
                 SocksHandlerState::Closed => break,
-            }
+            };
+
+            data = match data_or_err {
+                Ok(data) => data,
+                Err(err) => {
+                    eprintln!("Handler error: {}", err);
+                    self.close();
+                    break;
+                }
+            };
         }
     }
 
     fn handle_auth_data<'a, 'b, 'c>(&'a mut self, conn: &'b mut Connection,
-                                    data: &'c[u8]) -> &'c[u8]
+                                    data: &'c[u8]) -> Result<&'c [u8], String>
     {
         let (request, data) = match AuthRequest::parse(data) {
             Some((request, data)) => (request, data),
             None => {
-                eprintln!("Invalid AuthRequest, closing connection");
-                self.close();
-                return &[];
+                return Err("Invalid AuthRequest, closing connection"
+                           .to_string());
             }
         };
 
         if request.version != 5 {
-            eprintln!("Unsupported socks version: {}", request.version);
-            self.close();
-            return &[];
+            return Err(format!("Unsupported socks version: {}",
+                               request.version));
         }
 
         if !request.methods.contains(&AuthMethod::Unauthorized) {
-            eprintln!("No supported auth method");
-            self.close();
-            return &[];
+            return Err("No supported auth method".to_string());
         }
 
         let reply = AuthReply{version: 5, method: AuthMethod::Unauthorized};
-        conn.write(&reply.to_bytes()).unwrap_or_else(|err| {
-            eprintln!("Failed to write to socket: {}", err);
-            0
-        });
+        match conn.write(&reply.to_bytes()) {
+            Ok(_) => (),
+            Err(err) => return Err(format!("Failed to write to socket: {}",
+                                           err))
+        }
 
         eprintln!("Auth negotiation successfull");
         self.state = SocksHandlerState::WaitForRequest;
-        return data;
+        return Ok(data);
     }
 
     pub fn close(&mut self) {
