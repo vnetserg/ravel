@@ -95,6 +95,8 @@ impl SocksHandler {
         }
 
         if !request.methods.contains(&AuthMethod::Unauthorized) {
+            let reply = AuthReply{version: 5, method: AuthMethod::NoMethod};
+            let _ = conn.write(&reply.to_bytes());
             return Err("No supported auth method".to_string());
         }
 
@@ -133,6 +135,7 @@ impl Drop for SocksHandler {
 #[derive(PartialEq)]
 enum AuthMethod {
     Unauthorized,
+    NoMethod,
     Other
 }
 
@@ -170,7 +173,8 @@ struct AuthReply {
 impl AuthReply {
     fn to_bytes(&self) -> [u8; 2] {
         let method = match self.method {
-            AuthMethod::Unauthorized => 0,
+            AuthMethod::Unauthorized => 0x00,
+            AuthMethod::NoMethod => 0xff,
             AuthMethod::Other => panic!("Can not convert AuthMethod::Other \
                                          to bytes!")
         };
