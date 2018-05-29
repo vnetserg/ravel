@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::ops::Drop;
 use std::io::Write;
 
@@ -22,7 +23,14 @@ impl SocksHandlerFactory {
 pub enum SocksHandlerState {
     WaitForAuth,
     WaitForRequest,
+    WaitForRemote,
     Closed
+}
+
+
+pub enum HandlerRequest {
+    Connect(SocketAddr),
+    Close
 }
 
 
@@ -39,12 +47,17 @@ impl SocksHandler {
     pub fn handle_connection_data<'a, 'b, 'c>(&'a mut self,
                                               conn: &'b mut Connection,
                                               mut data: &'c [u8])
+        -> Vec<HandlerRequest>
     {
+        let mut requests = Vec::new();
+
         while data.len() > 0 {
             let data_or_err = match self.state {
                 SocksHandlerState::WaitForAuth =>
                     self.handle_auth_data(conn, data),
-                SocksHandlerState::WaitForRequest => match conn.write(data) {
+                SocksHandlerState::WaitForRequest =>
+                    self.handle_request_data(conn, data, &mut requests),
+                SocksHandlerState::WaitForRemote => match conn.write(data) {
                     Ok(_) => break,
                     Err(err) => Err(err.to_string()),
                 },
@@ -55,11 +68,14 @@ impl SocksHandler {
                 Ok(data) => data,
                 Err(err) => {
                     eprintln!("Handler error: {}", err);
-                    self.close();
+                    self.state = SocksHandlerState::Closed;
+                    requests.push(HandlerRequest::Close);
                     break;
                 }
             };
         }
+
+        requests
     }
 
     fn handle_auth_data<'a, 'b, 'c>(&'a mut self, conn: &'b mut Connection,
@@ -94,18 +110,15 @@ impl SocksHandler {
         return Ok(data);
     }
 
-    pub fn close(&mut self) {
-        self.state = SocksHandlerState::Closed;
-    }
-
-    pub fn state(&self) -> &SocksHandlerState {
-        &self.state
-    }
-
-    pub fn is_closed(&self) -> bool {
-        match self.state {
-            SocksHandlerState::Closed => true,
-            _ => false
+    fn handle_request_data<'a, 'b, 'c>(&'a mut self,
+                                       conn: &'b mut Connection,
+                                       data: &'c[u8],
+                                       _requests: &mut Vec<HandlerRequest>)
+        -> Result<&'c [u8], String>
+    {
+        match conn.write(data) {
+            Ok(_) => Ok(&[]),
+            Err(err) => Err(err.to_string())
         }
     }
 }

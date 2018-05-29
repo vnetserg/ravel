@@ -85,14 +85,17 @@ impl EventLoop {
             self.dispatcher.handle_drop_connection(&mut conn);
             eprintln!("Connection closed: {}", conn.addr());
         } else {
-            let request = {
+            let requests = {
                 let conn = self.connections.get_mut(id).unwrap();
                 eprintln!("Got {} bytes from {}", len, conn.addr());
                 self.dispatcher.handle_connection_data(conn,
                                                        &self.read_buffer[..len])
             };
-            if let DispatcherRequest::Drop(id) = request {
-                self.connections.remove(id);
+
+            for req in requests {
+                match req {
+                    DispatcherRequest::Drop(id) => self.connections.remove(id),
+                };
             }
         }
         

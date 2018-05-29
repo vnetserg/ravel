@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
 use conn::Connection;
-use socks_handler::{SocksHandlerFactory, SocksHandler};
+use socks_handler::{SocksHandlerFactory, SocksHandler, HandlerRequest};
 
 pub enum DispatcherRequest {
-    None,
     Drop(usize)
 }
 
@@ -24,22 +23,25 @@ impl Dispatcher {
     }
 
     pub fn handle_connection_data(&mut self, conn: &mut Connection, data: &[u8])
-        -> DispatcherRequest
+        -> Vec<DispatcherRequest>
     {
         eprintln!("Dispatcher received data");
-        let closed = {
+        let handler_requests = {
             let handler = self.handlers.get_mut(&conn.id()).expect(
                             "Dispatcher got data from unexisting connection");
-            handler.handle_connection_data(conn, data);
-            handler.is_closed()
+            handler.handle_connection_data(conn, data)
         };
-        if closed {
-            eprintln!("Dispatcher dropping handler due to request");
-            self.handlers.remove(&conn.id());
-            DispatcherRequest::Drop(conn.id())
-        } else {
-            DispatcherRequest::None
-        }
+
+        handler_requests.into_iter().map(|req|
+            match req {
+                HandlerRequest::Close => {
+                    eprintln!("Dispatcher dropping handler due to request");
+                    self.handlers.remove(&conn.id());
+                    DispatcherRequest::Drop(conn.id())
+                },
+                HandlerRequest::Connect(_) => panic!("Connect request")
+            }
+        ).collect()
     }
 
     pub fn handle_drop_connection(&mut self, conn: &mut Connection) {
