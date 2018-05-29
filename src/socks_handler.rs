@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::ops::Drop;
 use std::io::Write;
 
@@ -28,8 +28,16 @@ pub enum SocksHandlerState {
 }
 
 
+#[derive(Clone, Debug)]
+pub enum NetAddr {
+    V4(Ipv4Addr),
+    V6(Ipv6Addr),
+    Name(String)
+}
+
+
 pub enum HandlerRequest {
-    Connect(SocketAddr),
+    Connect(NetAddr, u16),
     Close
 }
 
@@ -101,10 +109,8 @@ impl SocksHandler {
         }
 
         let reply = AuthReply{version: 5, method: AuthMethod::Unauthorized};
-        match conn.write(&reply.to_bytes()) {
-            Ok(_) => (),
-            Err(err) => return Err(format!("Failed to write to socket: {}",
-                                           err))
+        if let Err(err) = conn.write(&reply.to_bytes()) {
+            return Err(format!("Failed to write to socket: {}", err));
         }
 
         eprintln!("Auth negotiation successfull");
@@ -115,12 +121,30 @@ impl SocksHandler {
     fn handle_request_data<'a, 'b, 'c>(&'a mut self,
                                        conn: &'b mut Connection,
                                        data: &'c[u8],
-                                       _requests: &mut Vec<HandlerRequest>)
+                                       requests: &mut Vec<HandlerRequest>)
         -> Result<&'c [u8], String>
     {
-        match conn.write(data) {
-            Ok(_) => Ok(&[]),
-            Err(err) => Err(err.to_string())
+        let (socks, data) = match SocksRequest::parse(data) {
+            Some((socks, data)) => (socks, data),
+            None => return Err("Invalid socks request, closing".to_string()),
+        };
+
+        if socks.version != 5 {
+            return Err(format!("Unsupported socks version: {}", socks.version));
+        }
+
+        if let SocksCommand::Connect = socks.command {
+            requests.push(HandlerRequest::Connect(socks.address.clone(),
+                                                  socks.port));
+            let reply = SocksReply{version: 5, reply: SocksReplyStatus::Success,
+                                   address: socks.address, port: socks.port};
+            if let Err(err) = conn.write(&reply.to_bytes()) {
+                return Err(format!("Failed to write to socket: {}", err));
+            }
+            self.state = SocksHandlerState::WaitForRemote;
+            return Ok(data);
+        } else {
+            return Err(format!("Unsupported socks command"));
         }
     }
 }
@@ -179,5 +203,142 @@ impl AuthReply {
                                          to bytes!")
         };
         [self.version, method]
+    }
+}
+
+
+enum SocksCommand {
+    Connect,
+    Bind,
+    Associate
+}
+
+
+struct SocksRequest {
+    version: u8,
+    command: SocksCommand,
+    address: NetAddr,
+    port: u16
+}
+
+const ATYP_IPV4: u8 = 0x01;
+const ATYP_NAME: u8 = 0x03;
+const ATYP_IPV6: u8 = 0x04;
+
+const CMD_CONNECT: u8 = 0x01;
+const CMD_BIND: u8 = 0x02;
+const CMD_ASSOCIATE: u8 = 0x03;
+
+impl SocksRequest {
+    fn parse(data: &[u8]) -> Option<(SocksRequest, &[u8])> {
+        let (&version, data) = data.split_first()?;
+        let (&command, data) = data.split_first()?;
+        let command = match command {
+            CMD_CONNECT => SocksCommand::Connect,
+            CMD_BIND => SocksCommand::Bind,
+            CMD_ASSOCIATE => SocksCommand::Associate,
+            _ => return None,
+        };
+
+        let (_, data) = data.split_first()?;
+        let (&addr_type, data) = data.split_first()?;
+
+        let (address, data) = match addr_type {
+            ATYP_IPV4 => {
+                if data.len() < 4 {
+                    return None;
+                }
+                (NetAddr::V4(Ipv4Addr::from([
+                    data[0], data[1], data[2], data[3]
+                ])), &data[4..])
+            },
+            ATYP_IPV6 => {
+                if data.len() < 16 {
+                    return None;
+                }
+                (NetAddr::V6(Ipv6Addr::from([
+                    data[0], data[1], data[2], data[3],
+                    data[4], data[5], data[6], data[7],
+                    data[8], data[9], data[10], data[11],
+                    data[12], data[13], data[14], data[15],
+                ])), &data[16..])
+            },
+            ATYP_NAME => {
+                let (&len, data) = data.split_first()?;
+                if data.len() < len as usize {
+                    return None;
+                }
+                let addr = NetAddr::Name(
+                    match String::from_utf8(data[.. len as usize].iter().map(|&x| x).collect()) {
+                        Ok(s) => s,
+                        Err(_) => return None,
+                    });
+                (addr, &data[len as usize ..])
+            },
+            _ => return None,
+        };
+
+        if data.len() < 2 {
+            return None;
+        }
+        let port = ((data[0] as u16) << 8) + (data[1] as u16);
+
+        Some((SocksRequest{version, command, address, port}, &data[2..]))
+    }
+}
+
+
+const REP_SUCCESS: u8 = 0x00;
+const REP_FAILURE: u8 = 0x01;
+
+enum SocksReplyStatus {
+    Success,
+    Failure
+}
+
+struct SocksReply {
+    version: u8,
+    reply: SocksReplyStatus,
+    address: NetAddr,
+    port: u16
+}
+
+impl SocksReply {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut res = vec![self.version];
+        res.push(match self.reply {
+            SocksReplyStatus::Success => REP_SUCCESS,
+            SocksReplyStatus::Failure => REP_FAILURE,
+        });
+
+        match &self.address {
+            &NetAddr::V4(addr) => {
+                res.push(ATYP_IPV4);
+                for &x in addr.octets().iter() {
+                    res.push(x);
+                }
+            },
+            &NetAddr::V6(addr) => {
+                res.push(ATYP_IPV6);
+                for &x in addr.octets().iter() {
+                    res.push(x);
+                }
+            },
+            &NetAddr::Name(ref name) => {
+                res.push(ATYP_NAME);
+                if name.len() > 255 {
+                    panic!("Name is too long");
+                }
+                res.push(name.len() as u8);
+                for &x in name.as_bytes() {
+                    res.push(x);
+                }
+            },
+        }
+
+        res.push((self.port >> 8) as u8);
+        res.push((self.port & 0xff) as u8);
+        
+        res
     }
 }

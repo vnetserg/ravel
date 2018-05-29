@@ -4,7 +4,8 @@ use conn::Connection;
 use socks_handler::{SocksHandlerFactory, SocksHandler, HandlerRequest};
 
 pub enum DispatcherRequest {
-    Drop(usize)
+    Drop(usize),
+    None
 }
 
 pub struct Dispatcher {
@@ -39,7 +40,10 @@ impl Dispatcher {
                     self.handlers.remove(&conn.id());
                     DispatcherRequest::Drop(conn.id())
                 },
-                HandlerRequest::Connect(_) => panic!("Connect request")
+                HandlerRequest::Connect(addr, port) => {
+                    eprintln!("Connect request: {:?} {}", addr, port);
+                    DispatcherRequest::None
+                }
             }
         ).collect()
     }

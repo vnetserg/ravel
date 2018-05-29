@@ -94,7 +94,10 @@ impl EventLoop {
 
             for req in requests {
                 match req {
-                    DispatcherRequest::Drop(id) => self.connections.remove(id),
+                    DispatcherRequest::Drop(id) => {
+                        self.connections.remove(id);
+                    },
+                    DispatcherRequest::None => (),
                 };
             }
         }
