@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use conn::Connection;
-use socks_handler::{SocksHandlerFactory, SocksHandler, HandlerRequest};
+use socks::handler::{SocksHandlerFactory, SocksHandler, HandlerRequest};
 
 pub enum DispatcherRequest {
     Drop(usize),

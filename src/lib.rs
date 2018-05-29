@@ -7,12 +7,12 @@ use mio::net::TcpListener;
 
 pub mod evloop;
 pub mod dispatcher;
-pub mod socks_handler;
+pub mod socks;
 pub mod conn;
 
 use evloop::EventLoop;
 use dispatcher::Dispatcher;
-use socks_handler::SocksHandlerFactory;
+use socks::handler::SocksHandlerFactory;
 
 pub struct Config {
     pub addr: SocketAddr,
