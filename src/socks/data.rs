@@ -1,3 +1,5 @@
+use num;
+
 use std::io::Read;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
@@ -20,12 +22,13 @@ pub enum NetAddr {
 }
 
 
-#[derive(PartialEq)]
+#[derive(Clone, Copy, PartialEq, FromPrimitive)]
 pub enum AuthMethod {
-    Unauthorized,
-    NoMethod,
-    Other
+    Unauthorized = 0x00,
+    Other,
+    NoMethod = 0xff,
 }
+
 
 pub struct AuthRequest {
     pub version: u8,
@@ -37,10 +40,7 @@ impl AuthRequest {
         let version = get!(data.read_u8());
         let n_methods = get!(data.read_u8());
         let methods: Vec<Option<AuthMethod>> = (0..n_methods).map(|_|
-            match get!(data.read_u8()) {
-                0 => Some(AuthMethod::Unauthorized),
-                _ => Some(AuthMethod::Other)
-            }
+            num::FromPrimitive::from_u8(get!(data.read_u8()))
         ).collect();
 
         if methods.contains(&None) {
@@ -70,11 +70,11 @@ impl AuthReply {
     }
 }
 
-
+#[derive(Clone, Copy, FromPrimitive)]
 pub enum SocksCommand {
-    Connect,
-    Bind,
-    Associate
+    Connect = 0x01,
+    Bind = 0x02,
+    Associate = 0x03
 }
 
 
@@ -85,29 +85,23 @@ pub struct SocksRequest {
     pub port: u16
 }
 
-const ATYP_IPV4: u8 = 0x01;
-const ATYP_NAME: u8 = 0x03;
-const ATYP_IPV6: u8 = 0x04;
-
-const CMD_CONNECT: u8 = 0x01;
-const CMD_BIND: u8 = 0x02;
-const CMD_ASSOCIATE: u8 = 0x03;
+#[derive(Clone, Copy, FromPrimitive)]
+enum SocksAddrType {
+    Ipv4 = 0x01,
+    Name = 0x03,
+    Ipv6 = 0x04
+}
 
 impl SocksRequest {
     pub fn parse<T: Read>(mut data: T) -> Option<SocksRequest> {
         let version = get!(data.read_u8());
-        let command = match get!(data.read_u8()) {
-            CMD_CONNECT => SocksCommand::Connect,
-            CMD_BIND => SocksCommand::Bind,
-            CMD_ASSOCIATE => SocksCommand::Associate,
-            _ => return None,
-        };
-
+        let command = num::FromPrimitive::from_u8(get!(data.read_u8()))?;
         let _reserved = get!(data.read_u8());
-        let address = match get!(data.read_u8()) {
-            ATYP_IPV4 => NetAddr::V4(Ipv4Addr::from(
-                                get!(data.read_u32::<NetworkEndian>()))),
-            ATYP_IPV6 => {
+        let address = match num::FromPrimitive::from_u8(get!(data.read_u8()))? {
+            SocksAddrType::Ipv4 => 
+                NetAddr::V4(Ipv4Addr::from(
+                    get!(data.read_u32::<NetworkEndian>()))),
+            SocksAddrType::Ipv6 => {
                 NetAddr::V6(Ipv6Addr::from([
                     get!(data.read_u16::<NetworkEndian>()),
                     get!(data.read_u16::<NetworkEndian>()),
@@ -119,7 +113,7 @@ impl SocksRequest {
                     get!(data.read_u16::<NetworkEndian>()),
                 ]))
             },
-            ATYP_NAME => {
+            SocksAddrType::Name => {
                 let len = get!(data.read_u8());
                 let bytes_opt: Vec<Option<u8>> = (0..len).map(
                                 |_| Some(get!(data.read_u8()))).collect();
@@ -129,7 +123,6 @@ impl SocksRequest {
                 let bytes = bytes_opt.into_iter().map(|x| x.unwrap()).collect();
                 NetAddr::Name(get!(String::from_utf8(bytes)))
             },
-            _ => return None,
         };
 
         let port = get!(data.read_u16::<NetworkEndian>());
@@ -139,17 +132,15 @@ impl SocksRequest {
 }
 
 
-const REP_SUCCESS: u8 = 0x00;
-const REP_FAILURE: u8 = 0x01;
-
+#[derive(Clone, Copy)]
 pub enum SocksReplyStatus {
-    Success,
-    Failure
+    Success = 0x00,
+    Failure = 0x01
 }
 
 pub struct SocksReply {
     pub version: u8,
-    pub reply: SocksReplyStatus,
+    pub status: SocksReplyStatus,
     pub address: NetAddr,
     pub port: u16
 }
@@ -157,26 +148,23 @@ pub struct SocksReply {
 impl SocksReply {
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut res = vec![self.version];
-        res.push(match self.reply {
-            SocksReplyStatus::Success => REP_SUCCESS,
-            SocksReplyStatus::Failure => REP_FAILURE,
-        });
+        res.push(self.status as u8);
 
         match &self.address {
             &NetAddr::V4(addr) => {
-                res.push(ATYP_IPV4);
+                res.push(SocksAddrType::Ipv4 as u8);
                 for &x in addr.octets().iter() {
                     res.push(x);
                 }
             },
             &NetAddr::V6(addr) => {
-                res.push(ATYP_IPV6);
+                res.push(SocksAddrType::Ipv6 as u8);
                 for &x in addr.octets().iter() {
                     res.push(x);
                 }
             },
             &NetAddr::Name(ref name) => {
-                res.push(ATYP_NAME);
+                res.push(SocksAddrType::Name as u8);
                 if name.len() > 255 {
                     panic!("Name is too long");
                 }

@@ -124,8 +124,12 @@ impl SocksHandler {
         if let SocksCommand::Connect = socks.command {
             requests.push(HandlerRequest::Connect(socks.address.clone(),
                                                   socks.port));
-            let reply = SocksReply{version: 5, reply: SocksReplyStatus::Success,
-                                   address: socks.address, port: socks.port};
+            let reply = SocksReply {
+                version: 5,
+                status: SocksReplyStatus::Success,
+                address: socks.address,
+                port: socks.port
+            };
             if let Err(err) = conn.write(&reply.to_bytes()) {
                 return Err(format!("Failed to write to socket: {}", err));
             }

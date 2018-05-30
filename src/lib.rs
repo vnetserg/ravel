@@ -1,6 +1,10 @@
 extern crate mio;
+extern crate num;
 extern crate slab;
 extern crate byteorder;
+
+#[macro_use]
+extern crate num_derive;
 
 use std::net::SocketAddr;
 
