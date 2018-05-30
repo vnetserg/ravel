@@ -1,4 +1,3 @@
-use std::io::Cursor;
 use std::collections::HashMap;
 
 use conn::Connection;
@@ -25,7 +24,7 @@ impl Dispatcher {
     }
 
     pub fn handle_connection_data(&mut self, conn: &mut Connection,
-                                  data: Cursor<&[u8]>)
+                                  data: &[u8])
         -> Vec<DispatcherRequest>
     {
         eprintln!("Dispatcher received data");

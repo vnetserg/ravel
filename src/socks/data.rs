@@ -1,4 +1,4 @@
-use std::io::Cursor;
+use std::io::Read;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use byteorder::{NetworkEndian, ReadBytesExt};
@@ -33,7 +33,7 @@ pub struct AuthRequest {
 }
 
 impl AuthRequest {
-    pub fn parse(data: &mut Cursor<&[u8]>) -> Option<AuthRequest> {
+    pub fn parse<T: Read>(mut data: T) -> Option<AuthRequest> {
         let version = get!(data.read_u8());
         let n_methods = get!(data.read_u8());
         let methods: Vec<Option<AuthMethod>> = (0..n_methods).map(|_|
@@ -94,7 +94,7 @@ const CMD_BIND: u8 = 0x02;
 const CMD_ASSOCIATE: u8 = 0x03;
 
 impl SocksRequest {
-    pub fn parse(data: &mut Cursor<&[u8]>) -> Option<SocksRequest> {
+    pub fn parse<T: Read>(mut data: T) -> Option<SocksRequest> {
         let version = get!(data.read_u8());
         let command = match get!(data.read_u8()) {
             CMD_CONNECT => SocksCommand::Connect,

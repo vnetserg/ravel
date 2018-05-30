@@ -1,5 +1,5 @@
 use std::ops::Drop;
-use std::io::{Write, Cursor};
+use std::io::{Write, Read};
 
 use conn::Connection;
 use socks::data::*;
@@ -46,15 +46,12 @@ impl SocksHandler {
 
     pub fn handle_connection_data<'a, 'b>(&'a mut self,
                                               conn: &'b mut Connection,
-                                              data: Cursor<&[u8]>)
+                                              mut data: &[u8])
         -> Vec<HandlerRequest>
     {
         let mut requests = Vec::new();
-        let data = data.into_inner();
-        let len = data.len();
-        let mut data = Cursor::new(data);
 
-        while (data.position() as usize) < len - 1 {
+        while !data.is_empty() {
             let result = match self.state {
                 SocksHandlerState::WaitForAuth =>
                     self.handle_auth_data(conn, &mut data),
@@ -75,8 +72,9 @@ impl SocksHandler {
         requests
     }
 
-    fn handle_auth_data<'a, 'b>(&'a mut self, conn: &'b mut Connection,
-                                data: &mut Cursor<&[u8]>)
+    fn handle_auth_data<'a, 'b, T: Read>(&'a mut self,
+                                         conn: &'b mut Connection,
+                                         data: T)
         -> Result<(), String>
     {
         let request = match AuthRequest::parse(data) {
@@ -108,10 +106,10 @@ impl SocksHandler {
         return Ok(());
     }
 
-    fn handle_request_data<'a, 'b, 'c>(&'a mut self,
-                                       conn: &'b mut Connection,
-                                       data: &mut Cursor<&[u8]>,
-                                       requests: &mut Vec<HandlerRequest>)
+    fn handle_request_data<'a, 'b, T: Read>(&'a mut self,
+                                            conn: &'b mut Connection,
+                                            data: T,
+                                            requests: &mut Vec<HandlerRequest>)
         -> Result<(), String>
     {
         let socks = match SocksRequest::parse(data) {
