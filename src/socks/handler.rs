@@ -44,9 +44,8 @@ impl SocksHandler {
         SocksHandler{ state: SocksHandlerState::WaitForAuth }
     }
 
-    pub fn handle_connection_data<'a, 'b>(&'a mut self,
-                                          conn: &'b mut Connection,
-                                          mut data: &[u8])
+    pub fn handle_connection_data(&mut self, conn: &mut Connection,
+                                  mut data: &[u8])
         -> Vec<HandlerRequest>
     {
         let mut requests = Vec::new();
@@ -72,9 +71,7 @@ impl SocksHandler {
         requests
     }
 
-    fn handle_auth_data<'a, 'b, T: Read>(&'a mut self,
-                                         conn: &'b mut Connection,
-                                         data: T)
+    fn handle_auth_data<T: Read>(&mut self, conn: &mut Connection, data: T)
         -> Result<(), String>
     {
         let request = match AuthRequest::parse(data) {
@@ -106,10 +103,8 @@ impl SocksHandler {
         return Ok(());
     }
 
-    fn handle_request_data<'a, 'b, T: Read>(&'a mut self,
-                                            conn: &'b mut Connection,
-                                            data: T,
-                                            requests: &mut Vec<HandlerRequest>)
+    fn handle_request_data<T: Read>(&mut self, conn: & mut Connection, data: T,
+                                    requests: &mut Vec<HandlerRequest>)
         -> Result<(), String>
     {
         let socks = match SocksRequest::parse(data) {
