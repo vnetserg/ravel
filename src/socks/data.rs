@@ -147,21 +147,16 @@ pub struct SocksReply {
 
 impl SocksReply {
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut res = vec![self.version];
-        res.push(self.status as u8);
+        let mut res = vec![self.version, self.status as u8];
 
         match &self.address {
             &NetAddr::V4(addr) => {
                 res.push(SocksAddrType::Ipv4 as u8);
-                for &x in addr.octets().iter() {
-                    res.push(x);
-                }
+                res.extend(addr.octets().iter());
             },
             &NetAddr::V6(addr) => {
                 res.push(SocksAddrType::Ipv6 as u8);
-                for &x in addr.octets().iter() {
-                    res.push(x);
-                }
+                res.extend(addr.octets().iter());
             },
             &NetAddr::Name(ref name) => {
                 res.push(SocksAddrType::Name as u8);
@@ -169,9 +164,7 @@ impl SocksReply {
                     panic!("Name is too long");
                 }
                 res.push(name.len() as u8);
-                for &x in name.as_bytes() {
-                    res.push(x);
-                }
+                res.extend(name.as_bytes().iter());
             },
         }
 

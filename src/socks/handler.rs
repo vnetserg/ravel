@@ -45,8 +45,8 @@ impl SocksHandler {
     }
 
     pub fn handle_connection_data<'a, 'b>(&'a mut self,
-                                              conn: &'b mut Connection,
-                                              mut data: &[u8])
+                                          conn: &'b mut Connection,
+                                          mut data: &[u8])
         -> Vec<HandlerRequest>
     {
         let mut requests = Vec::new();
