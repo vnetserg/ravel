@@ -1,5 +1,5 @@
 use std::ops::Drop;
-use std::io::Write;
+use std::io::{Write, Cursor};
 
 use conn::Connection;
 use socks::data::*;
@@ -40,49 +40,47 @@ pub struct SocksHandler {
 
 impl SocksHandler {
     pub fn new(conn: &Connection) -> SocksHandler {
-        eprintln!("Created handler for {:?}", conn.addr());
+        eprintln!("Created handler for {}", conn.addr());
         SocksHandler{ state: SocksHandlerState::WaitForAuth }
     }
 
-    pub fn handle_connection_data<'a, 'b, 'c>(&'a mut self,
+    pub fn handle_connection_data<'a, 'b>(&'a mut self,
                                               conn: &'b mut Connection,
-                                              mut data: &'c [u8])
+                                              data: Cursor<&[u8]>)
         -> Vec<HandlerRequest>
     {
         let mut requests = Vec::new();
+        let data = data.into_inner();
+        let len = data.len();
+        let mut data = Cursor::new(data);
 
-        while data.len() > 0 {
-            let data_or_err = match self.state {
+        while (data.position() as usize) < len - 1 {
+            let result = match self.state {
                 SocksHandlerState::WaitForAuth =>
-                    self.handle_auth_data(conn, data),
+                    self.handle_auth_data(conn, &mut data),
                 SocksHandlerState::WaitForRequest =>
-                    self.handle_request_data(conn, data, &mut requests),
-                SocksHandlerState::WaitForRemote => match conn.write(data) {
-                    Ok(_) => break,
-                    Err(err) => Err(err.to_string()),
-                },
+                    self.handle_request_data(conn, &mut data, &mut requests),
+                SocksHandlerState::WaitForRemote => Ok(()),
                 SocksHandlerState::Closed => break,
             };
 
-            data = match data_or_err {
-                Ok(data) => data,
-                Err(err) => {
-                    eprintln!("Handler error: {}", err);
-                    self.state = SocksHandlerState::Closed;
-                    requests.push(HandlerRequest::Close);
-                    break;
-                }
-            };
+            if let Err(err) = result {
+                eprintln!("Handler error: {}", err);
+                self.state = SocksHandlerState::Closed;
+                requests.push(HandlerRequest::Close);
+                break;
+            }
         }
 
         requests
     }
 
-    fn handle_auth_data<'a, 'b, 'c>(&'a mut self, conn: &'b mut Connection,
-                                    data: &'c[u8]) -> Result<&'c [u8], String>
+    fn handle_auth_data<'a, 'b>(&'a mut self, conn: &'b mut Connection,
+                                data: &mut Cursor<&[u8]>)
+        -> Result<(), String>
     {
-        let (request, data) = match AuthRequest::parse(data) {
-            Some((request, data)) => (request, data),
+        let request = match AuthRequest::parse(data) {
+            Some(request) => request,
             None => {
                 return Err("Invalid AuthRequest, closing connection"
                            .to_string());
@@ -107,17 +105,17 @@ impl SocksHandler {
 
         eprintln!("Auth negotiation successfull");
         self.state = SocksHandlerState::WaitForRequest;
-        return Ok(data);
+        return Ok(());
     }
 
     fn handle_request_data<'a, 'b, 'c>(&'a mut self,
                                        conn: &'b mut Connection,
-                                       data: &'c[u8],
+                                       data: &mut Cursor<&[u8]>,
                                        requests: &mut Vec<HandlerRequest>)
-        -> Result<&'c [u8], String>
+        -> Result<(), String>
     {
-        let (socks, data) = match SocksRequest::parse(data) {
-            Some((socks, data)) => (socks, data),
+        let socks = match SocksRequest::parse(data) {
+            Some(socks) => socks,
             None => return Err("Invalid socks request, closing".to_string()),
         };
 
@@ -134,7 +132,7 @@ impl SocksHandler {
                 return Err(format!("Failed to write to socket: {}", err));
             }
             self.state = SocksHandlerState::WaitForRemote;
-            return Ok(data);
+            return Ok(());
         } else {
             return Err(format!("Unsupported socks command"));
         }

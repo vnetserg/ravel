@@ -88,8 +88,8 @@ impl EventLoop {
             let requests = {
                 let conn = self.connections.get_mut(id).unwrap();
                 eprintln!("Got {} bytes from {}", len, conn.addr());
-                self.dispatcher.handle_connection_data(conn,
-                                                       &self.read_buffer[..len])
+                let data = io::Cursor::new(&self.read_buffer[..len]);
+                self.dispatcher.handle_connection_data(conn, data)
             };
 
             for req in requests {

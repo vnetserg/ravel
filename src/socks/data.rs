@@ -1,4 +1,15 @@
+use std::io::Cursor;
 use std::net::{Ipv4Addr, Ipv6Addr};
+
+use byteorder::{NetworkEndian, ReadBytesExt};
+
+
+macro_rules! get {
+    ($e:expr) => (match $e {
+        Ok(val) => val,
+        Err(_) => return None,
+    });
+}
 
 
 #[derive(Clone, Debug)]
@@ -22,22 +33,22 @@ pub struct AuthRequest {
 }
 
 impl AuthRequest {
-    pub fn parse(data: &[u8]) -> Option<(AuthRequest, &[u8])> {
-        let (&version, data) = data.split_first()?;
-        let (&n_methods, data) = data.split_first()?;
-
-        if data.len() < n_methods as usize {
-            return None;
-        }
-
-        let methods = data[.. n_methods as usize].iter().map(|&x|
-            match x {
-                0 => AuthMethod::Unauthorized,
-                _ => AuthMethod::Other
+    pub fn parse(data: &mut Cursor<&[u8]>) -> Option<AuthRequest> {
+        let version = get!(data.read_u8());
+        let n_methods = get!(data.read_u8());
+        let methods: Vec<Option<AuthMethod>> = (0..n_methods).map(|_|
+            match get!(data.read_u8()) {
+                0 => Some(AuthMethod::Unauthorized),
+                _ => Some(AuthMethod::Other)
             }
         ).collect();
 
-        Some((AuthRequest{ version, methods }, &data[n_methods as usize ..]))
+        if methods.contains(&None) {
+            return None;
+        }
+        let methods = methods.into_iter().map(|x| x.unwrap()).collect();
+
+        Some(AuthRequest{ version, methods })
     }
 }
 
@@ -83,60 +94,47 @@ const CMD_BIND: u8 = 0x02;
 const CMD_ASSOCIATE: u8 = 0x03;
 
 impl SocksRequest {
-    pub fn parse(data: &[u8]) -> Option<(SocksRequest, &[u8])> {
-        let (&version, data) = data.split_first()?;
-        let (&command, data) = data.split_first()?;
-        let command = match command {
+    pub fn parse(data: &mut Cursor<&[u8]>) -> Option<SocksRequest> {
+        let version = get!(data.read_u8());
+        let command = match get!(data.read_u8()) {
             CMD_CONNECT => SocksCommand::Connect,
             CMD_BIND => SocksCommand::Bind,
             CMD_ASSOCIATE => SocksCommand::Associate,
             _ => return None,
         };
 
-        let (_, data) = data.split_first()?;
-        let (&addr_type, data) = data.split_first()?;
-
-        let (address, data) = match addr_type {
-            ATYP_IPV4 => {
-                if data.len() < 4 {
-                    return None;
-                }
-                (NetAddr::V4(Ipv4Addr::from([
-                    data[0], data[1], data[2], data[3]
-                ])), &data[4..])
-            },
+        let _reserved = get!(data.read_u8());
+        let address = match get!(data.read_u8()) {
+            ATYP_IPV4 => NetAddr::V4(Ipv4Addr::from(
+                                get!(data.read_u32::<NetworkEndian>()))),
             ATYP_IPV6 => {
-                if data.len() < 16 {
-                    return None;
-                }
-                (NetAddr::V6(Ipv6Addr::from([
-                    data[0], data[1], data[2], data[3],
-                    data[4], data[5], data[6], data[7],
-                    data[8], data[9], data[10], data[11],
-                    data[12], data[13], data[14], data[15],
-                ])), &data[16..])
+                NetAddr::V6(Ipv6Addr::from([
+                    get!(data.read_u16::<NetworkEndian>()),
+                    get!(data.read_u16::<NetworkEndian>()),
+                    get!(data.read_u16::<NetworkEndian>()),
+                    get!(data.read_u16::<NetworkEndian>()),
+                    get!(data.read_u16::<NetworkEndian>()),
+                    get!(data.read_u16::<NetworkEndian>()),
+                    get!(data.read_u16::<NetworkEndian>()),
+                    get!(data.read_u16::<NetworkEndian>()),
+                ]))
             },
             ATYP_NAME => {
-                let (&len, data) = data.split_first()?;
-                if data.len() < len as usize {
+                let len = get!(data.read_u8());
+                let bytes_opt: Vec<Option<u8>> = (0..len).map(
+                                |_| Some(get!(data.read_u8()))).collect();
+                if bytes_opt.contains(&None) {
                     return None;
                 }
-                let addr = NetAddr::Name(
-                    match String::from_utf8(data[.. len as usize].iter().map(|&x| x).collect()) {
-                        Ok(s) => s,
-                        Err(_) => return None,
-                    });
-                (addr, &data[len as usize ..])
+                let bytes = bytes_opt.into_iter().map(|x| x.unwrap()).collect();
+                NetAddr::Name(get!(String::from_utf8(bytes)))
             },
             _ => return None,
         };
 
-        if data.len() < 2 {
-            return None;
-        }
-        let port = ((data[0] as u16) << 8) + (data[1] as u16);
+        let port = get!(data.read_u16::<NetworkEndian>());
 
-        Some((SocksRequest{version, command, address, port}, &data[2..]))
+        Some(SocksRequest{version, command, address, port})
     }
 }
 

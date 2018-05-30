@@ -6,3 +6,4 @@ authors = ["Sergei Fomin <sergio-dna@yandex.ru>"]
 [dependencies]
 mio = "0.6"
 slab = "0.4"
+byteorder = "1.2.3"

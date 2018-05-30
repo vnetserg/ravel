@@ -1,3 +1,4 @@
+use std::io::Cursor;
 use std::collections::HashMap;
 
 use conn::Connection;
@@ -23,7 +24,8 @@ impl Dispatcher {
         self.handlers.insert(conn.id(), self.factory.new_handler(conn));
     }
 
-    pub fn handle_connection_data(&mut self, conn: &mut Connection, data: &[u8])
+    pub fn handle_connection_data(&mut self, conn: &mut Connection,
+                                  data: Cursor<&[u8]>)
         -> Vec<DispatcherRequest>
     {
         eprintln!("Dispatcher received data");
