@@ -1,6 +1,7 @@
 use num;
 
 use std::io::Read;
+use std::convert::From;
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use byteorder::{NetworkEndian, ReadBytesExt};
@@ -25,8 +26,19 @@ pub enum NetAddr {
 #[derive(Clone, Copy, PartialEq, FromPrimitive)]
 pub enum AuthMethod {
     Unauthorized = 0x00,
+    GssApi = 0x01,
+    UserPass = 0x02,
     Other,
     NoMethod = 0xff,
+}
+
+impl From<u8> for AuthMethod {
+    fn from(x: u8) -> AuthMethod {
+        match num::FromPrimitive::from_u8(x) {
+            Some(method) => method,
+            None => AuthMethod::Other,
+        }
+    }
 }
 
 
@@ -40,7 +52,7 @@ impl AuthRequest {
         let version = get!(data.read_u8());
         let n_methods = get!(data.read_u8());
         let methods: Vec<Option<AuthMethod>> = (0..n_methods).map(|_|
-            num::FromPrimitive::from_u8(get!(data.read_u8()))
+            Some(AuthMethod::from(get!(data.read_u8())))
         ).collect();
 
         if methods.contains(&None) {
@@ -60,13 +72,10 @@ pub struct AuthReply {
 
 impl AuthReply {
     pub fn to_bytes(&self) -> [u8; 2] {
-        let method = match self.method {
-            AuthMethod::Unauthorized => 0x00,
-            AuthMethod::NoMethod => 0xff,
-            AuthMethod::Other => panic!("Can not convert AuthMethod::Other \
-                                         to bytes!")
-        };
-        [self.version, method]
+        if let AuthMethod::Other = self.method {
+            panic!("Can not convert AuthMethod::Other to bytes!")
+        }
+        [self.version, self.method as u8]
     }
 }
 
