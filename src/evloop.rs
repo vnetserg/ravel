@@ -1,5 +1,7 @@
 use std::io;
+use std::rc::Rc;
 use std::io::Read;
+use std::cell::RefCell;
 
 use mio::{Token, Poll, Events, Ready, PollOpt};
 use mio::net::TcpListener;
@@ -16,7 +18,7 @@ pub struct EventLoop {
     poll: Poll,
     dispatcher: Dispatcher,
     listeners: Slab<TcpListener>,
-    connections: Slab<Connection>,
+    connections: Slab<Rc<RefCell<Connection>>>,
     read_buffer: [u8; BUFFER_SIZE],
 }
 
@@ -64,12 +66,13 @@ impl EventLoop {
         let entry = self.connections.vacant_entry();
         let id = entry.key();
         let conn = Connection::new(id, listener_id, stream, addr);
-        let conn = entry.insert(conn);
+        let rc = Rc::new(RefCell::new(conn));
+        let rc = entry.insert(rc);
 
-        self.poll.register(conn, Token(2 * id + 1),
+        self.poll.register(&*rc.borrow(), Token(2 * id + 1),
                            Ready::readable(), PollOpt::edge())?;
 
-        self.dispatcher.handle_new_connection(conn);
+        self.dispatcher.handle_new_connection(rc.clone());
 
         Ok(())
     }
@@ -77,19 +80,19 @@ impl EventLoop {
     fn handle_connection_readable(&mut self, id: usize)
         -> Result<(), io::Error>
     {
-        let len = self.connections.get_mut(id).unwrap() 
+        let len = self.connections.get_mut(id).unwrap().borrow_mut()
                         .read(&mut self.read_buffer)?;
 
         if len == 0 {
-            let mut conn = self.connections.remove(id);
-            self.dispatcher.handle_drop_connection(&mut conn);
-            eprintln!("Connection closed: {}", conn.addr());
+            let conn = self.connections.remove(id);
+            self.dispatcher.handle_drop_connection(conn.clone());
+            eprintln!("Connection closed: {}", conn.borrow().addr());
         } else {
             let requests = {
                 let conn = self.connections.get_mut(id).unwrap();
-                eprintln!("Got {} bytes from {}", len, conn.addr());
+                eprintln!("Got {} bytes from {}", len, conn.borrow().addr());
                 let data = &self.read_buffer[..len];
-                self.dispatcher.handle_connection_data(conn, data)
+                self.dispatcher.handle_connection_data(conn.clone(), data)
             };
 
             for req in requests {

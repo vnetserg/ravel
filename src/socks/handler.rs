@@ -1,3 +1,5 @@
+use std::rc::Rc;
+use std::cell::RefCell;
 use std::ops::Drop;
 use std::io::{Write, Read};
 
@@ -14,7 +16,7 @@ impl SocksHandlerFactory {
         SocksHandlerFactory{}
     }
 
-    pub fn new_handler(&self, conn: &Connection) -> SocksHandler {
+    pub fn new_handler(&self, conn: Rc<RefCell<Connection>>) -> SocksHandler {
         SocksHandler::new(conn)
     }
 }
@@ -36,15 +38,17 @@ pub enum HandlerRequest {
 
 pub struct SocksHandler {
     state: SocksHandlerState,
+    client: Rc<RefCell<Connection>>
 }
 
 impl SocksHandler {
-    pub fn new(conn: &Connection) -> SocksHandler {
-        eprintln!("Created handler for {}", conn.addr());
-        SocksHandler{ state: SocksHandlerState::WaitForAuth }
+    pub fn new(conn: Rc<RefCell<Connection>>) -> SocksHandler {
+        eprintln!("Created handler for {}", conn.borrow().addr());
+        SocksHandler{ state: SocksHandlerState::WaitForAuth,
+                      client: conn }
     }
 
-    pub fn handle_connection_data(&mut self, conn: &mut Connection,
+    pub fn handle_connection_data(&mut self, conn: Rc<RefCell<Connection>>,
                                   mut data: &[u8])
         -> Vec<HandlerRequest>
     {
@@ -53,9 +57,10 @@ impl SocksHandler {
         while !data.is_empty() {
             let result = match self.state {
                 SocksHandlerState::WaitForAuth =>
-                    self.handle_auth_data(conn, &mut data),
+                    self.handle_auth_data(conn.clone(), &mut data),
                 SocksHandlerState::WaitForRequest =>
-                    self.handle_request_data(conn, &mut data, &mut requests),
+                    self.handle_request_data(conn.clone(), &mut data,
+                                             &mut requests),
                 SocksHandlerState::WaitForRemote => Ok(()),
                 SocksHandlerState::Closed => break,
             };
@@ -71,9 +76,11 @@ impl SocksHandler {
         requests
     }
 
-    fn handle_auth_data<T: Read>(&mut self, conn: &mut Connection, data: T)
+    fn handle_auth_data<T: Read>(&mut self, conn: Rc<RefCell<Connection>>,
+                                 data: T)
         -> Result<(), String>
     {
+        let mut conn = conn.borrow_mut();
         let request = match AuthRequest::parse(data) {
             Some(request) => request,
             None => {
@@ -103,10 +110,11 @@ impl SocksHandler {
         return Ok(());
     }
 
-    fn handle_request_data<T: Read>(&mut self, conn: & mut Connection, data: T,
-                                    requests: &mut Vec<HandlerRequest>)
+    fn handle_request_data<T: Read>(&mut self, conn: Rc<RefCell<Connection>>,
+                                    data: T, requests: &mut Vec<HandlerRequest>)
         -> Result<(), String>
     {
+        let mut conn = conn.borrow_mut();
         let socks = match SocksRequest::parse(data) {
             Some(socks) => socks,
             None => return Err("Invalid socks request, closing".to_string()),
