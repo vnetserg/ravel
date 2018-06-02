@@ -1,9 +1,11 @@
 use std::rc::Rc;
+use std::boxed::Box;
 use std::cell::RefCell;
 use std::ops::Drop;
 use std::io::{Write, Read};
 
 use conn::Connection;
+use consumer::{Consumer, ConsumerRequest, ConsumerStatus};
 use socks::data::*;
 
 
@@ -22,130 +24,142 @@ impl SocksHandlerFactory {
 }
 
 
-pub enum SocksHandlerState {
-    WaitForAuth,
-    WaitForRequest,
-    WaitForRemote,
-    Closed
-}
-
-
-pub enum HandlerRequest {
-    Connect(NetAddr, u16),
-    Close
-}
-
 
 pub struct SocksHandler {
-    state: SocksHandlerState,
-    client: Rc<RefCell<Connection>>
+    consumer: Box<Consumer>
 }
 
 impl SocksHandler {
     pub fn new(conn: Rc<RefCell<Connection>>) -> SocksHandler {
         eprintln!("Created handler for {}", conn.borrow().addr());
-        SocksHandler{ state: SocksHandlerState::WaitForAuth,
-                      client: conn }
+        SocksHandler{ consumer: Box::new(SocksInitStep{}) }
     }
+
 
     pub fn handle_connection_data(&mut self, conn: Rc<RefCell<Connection>>,
                                   mut data: &[u8])
-        -> Vec<HandlerRequest>
+        -> Vec<ConsumerRequest>
     {
         let mut requests = Vec::new();
 
         while !data.is_empty() {
-            let result = match self.state {
-                SocksHandlerState::WaitForAuth =>
-                    self.handle_auth_data(conn.clone(), &mut data),
-                SocksHandlerState::WaitForRequest =>
-                    self.handle_request_data(conn.clone(), &mut data,
-                                             &mut requests),
-                SocksHandlerState::WaitForRemote => Ok(()),
-                SocksHandlerState::Closed => break,
-            };
-
-            if let Err(err) = result {
-                eprintln!("Handler error: {}", err);
-                self.state = SocksHandlerState::Closed;
-                requests.push(HandlerRequest::Close);
-                break;
+            match self.consumer.take(conn.clone(), &mut data, &mut requests) {
+                ConsumerStatus::Hold => { }
+                ConsumerStatus::Next(cons) => self.consumer = cons,
+                ConsumerStatus::Failure(err) => {
+                    eprintln!("Handler error: {}", err);
+                    return vec![ConsumerRequest::Close];
+                }
             }
         }
 
         requests
-    }
-
-    fn handle_auth_data<T: Read>(&mut self, conn: Rc<RefCell<Connection>>,
-                                 data: T)
-        -> Result<(), String>
-    {
-        let mut conn = conn.borrow_mut();
-        let request = match AuthRequest::parse(data) {
-            Some(request) => request,
-            None => {
-                return Err("Invalid AuthRequest, closing connection"
-                           .to_string());
-            }
-        };
-
-        if request.version != 5 {
-            return Err(format!("Unsupported socks version: {}",
-                               request.version));
-        }
-
-        if !request.methods.contains(&AuthMethod::Unauthorized) {
-            let reply = AuthReply{version: 5, method: AuthMethod::NoMethod};
-            let _ = conn.write(&reply.to_bytes());
-            return Err("No supported auth method".to_string());
-        }
-
-        let reply = AuthReply{version: 5, method: AuthMethod::Unauthorized};
-        if let Err(err) = conn.write(&reply.to_bytes()) {
-            return Err(format!("Failed to write to socket: {}", err));
-        }
-
-        eprintln!("Auth negotiation successfull");
-        self.state = SocksHandlerState::WaitForRequest;
-        return Ok(());
-    }
-
-    fn handle_request_data<T: Read>(&mut self, conn: Rc<RefCell<Connection>>,
-                                    data: T, requests: &mut Vec<HandlerRequest>)
-        -> Result<(), String>
-    {
-        let mut conn = conn.borrow_mut();
-        let socks = match SocksRequest::parse(data) {
-            Some(socks) => socks,
-            None => return Err("Invalid socks request, closing".to_string()),
-        };
-
-        if socks.version != 5 {
-            return Err(format!("Unsupported socks version: {}", socks.version));
-        }
-
-        if let SocksCommand::Connect = socks.command {
-            requests.push(HandlerRequest::Connect(socks.address.clone(),
-                                                  socks.port));
-            let reply = SocksReply {
-                version: 5,
-                status: SocksReplyStatus::Success,
-                address: socks.address,
-                port: socks.port
-            };
-            if let Err(err) = conn.write(&reply.to_bytes()) {
-                return Err(format!("Failed to write to socket: {}", err));
-            }
-            self.state = SocksHandlerState::WaitForRemote;
-            return Ok(());
-        } else {
-            return Err(format!("Unsupported socks command"));
-        }
     }
 }
 
 impl Drop for SocksHandler {
     fn drop(&mut self) {
         eprintln!("Dropped handler");
+    }
+}
+
+
+struct SocksInitStep {}
+
+impl Consumer for SocksInitStep {
+    fn take(&mut self, conn: Rc<RefCell<Connection>>, data: &mut Read,
+                     _requests: &mut Vec<ConsumerRequest>)
+        -> ConsumerStatus
+    {
+        let mut conn = conn.borrow_mut();
+        let auth = match AuthRequest::parse(data) {
+            Some(auth) => auth,
+            None => {
+                return ConsumerStatus::Failure(
+                    "Invalid AuthRequest, closing connection".to_string());
+            }
+        };
+
+        if auth.version != 5 {
+            return ConsumerStatus::Failure(
+                format!("Unsupported socks version: {}", auth.version));
+        }
+
+        if !auth.methods.contains(&AuthMethod::Unauthorized) {
+            let reply = AuthReply{version: 5, method: AuthMethod::NoMethod};
+            let _ = conn.write(&reply.to_bytes());
+            return ConsumerStatus::Failure("No supported auth method"
+                                           .to_string());
+        }
+
+        let reply = AuthReply{version: 5, method: AuthMethod::Unauthorized};
+        if let Err(err) = conn.write(&reply.to_bytes()) {
+            return ConsumerStatus::Failure(
+                format!("Failed to write to socket: {}", err));
+        }
+
+        eprintln!("Auth negotiation successfull");
+        return ConsumerStatus::Next(Box::new(SocksRequestStep{}));
+    }
+}
+
+
+struct SocksRequestStep {}
+
+impl Consumer for SocksRequestStep {
+    fn take(&mut self, conn: Rc<RefCell<Connection>>, data: &mut Read,
+                     requests: &mut Vec<ConsumerRequest>)
+        -> ConsumerStatus
+    {
+        let mut conn = conn.borrow_mut();
+        let socks = match SocksRequest::parse(data) {
+            Some(socks) => socks,
+            None => return ConsumerStatus::Failure(
+                "Invalid socks request, closing".to_string()),
+        };
+
+        if socks.version != 5 {
+            return ConsumerStatus::Failure(
+                format!("Unsupported socks version: {}", socks.version));
+        }
+
+        if let SocksCommand::Connect = socks.command {
+            let reply = SocksReply {
+                version: 5,
+                status: SocksReplyStatus::Success,
+                address: socks.address.clone(),
+                port: socks.port
+            };
+            if let Err(err) = conn.write(&reply.to_bytes()) {
+                return ConsumerStatus::Failure(
+                    format!("Failed to write to socket: {}", err));
+            }
+            requests.push(ConsumerRequest::Connect(socks.address, socks.port));
+            return ConsumerStatus::Next(Box::new(SocksConnectStep{}));
+        } else {
+            return ConsumerStatus::Failure(
+                format!("Unsupported socks command"));
+        }
+    }
+}
+
+
+struct SocksConnectStep {}
+
+impl Consumer for SocksConnectStep {
+    fn take(&mut self, conn: Rc<RefCell<Connection>>, data: &mut Read,
+                     _requests: &mut Vec<ConsumerRequest>)
+        -> ConsumerStatus
+    {
+        let mut buf = vec![];
+        data.read_to_end(&mut buf).unwrap();
+
+        let mut conn = conn.borrow_mut();
+        if let Err(err) = conn.write(&buf) {
+            return ConsumerStatus::Failure(
+                format!("Failed to write to socket: {}", err));
+        } else {
+            return ConsumerStatus::Hold;
+        }
     }
 }

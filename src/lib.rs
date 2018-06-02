@@ -14,6 +14,7 @@ pub mod evloop;
 pub mod dispatcher;
 pub mod socks;
 pub mod conn;
+pub mod consumer;
 
 use evloop::EventLoop;
 use dispatcher::Dispatcher;

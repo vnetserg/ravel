@@ -3,7 +3,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use conn::Connection;
-use socks::handler::{SocksHandlerFactory, SocksHandler, HandlerRequest};
+use socks::handler::{SocksHandlerFactory, SocksHandler};
+use consumer::ConsumerRequest;
 
 pub enum DispatcherRequest {
     Drop(usize),
@@ -39,12 +40,12 @@ impl Dispatcher {
 
         handler_requests.into_iter().map(|req|
             match req {
-                HandlerRequest::Close => {
+                ConsumerRequest::Close => {
                     eprintln!("Dispatcher dropping handler due to request");
                     self.handlers.remove(&conn.borrow().id());
                     DispatcherRequest::Drop(conn.borrow().id())
                 },
-                HandlerRequest::Connect(addr, port) => {
+                ConsumerRequest::Connect(addr, port) => {
                     eprintln!("Connect request: {:?} {}", addr, port);
                     DispatcherRequest::None
                 }
